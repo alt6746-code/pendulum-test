@@ -26,15 +26,15 @@ export function validateMeasurement(data: MeasurementData): ValidationResult {
     return { type: 'no-motion', message: MESSAGES['no-motion'] };
   }
 
-  // 1. Check for no motion: first swing < 10°
+  // 1. Check for no motion: first swing < 5° (relaxed from 10° for real sensor noise)
   const { angles } = computeAngles(samples, startIndex, endIndex, baselineAngle);
   const maxAngle = angles.reduce((max, a) => Math.max(max, Math.abs(a)), 0);
-  if (maxAngle < 10) {
+  if (maxAngle < 5) {
     return { type: 'no-motion', message: MESSAGES['no-motion'] };
   }
 
-  // 2. Check for impact: acceleration spike > 4g (39.24 m/s²)
-  const IMPACT_THRESHOLD = 4 * 9.81;
+  // 2. Check for impact: acceleration spike > 6g (relaxed from 4g for real device vibration)
+  const IMPACT_THRESHOLD = 6 * 9.81;
   for (let i = startIndex; i <= endIndex && i < samples.length; i++) {
     const s = samples[i];
     const totalAcc = Math.sqrt(s.accX * s.accX + s.accY * s.accY + s.accZ * s.accZ);
@@ -43,36 +43,43 @@ export function validateMeasurement(data: MeasurementData): ValidationResult {
     }
   }
 
-  // 3. Check for too-short: fewer than 2 oscillations
-  // Count peaks (local maxima and minima with minimum prominence)
+  // 3. Check for too-short: fewer than 1 full oscillation
+  // Count peaks with smoothing to filter sensor noise
   let peakCount = 0;
-  for (let i = 1; i < angles.length - 1; i++) {
-    const isMax = angles[i] > angles[i - 1] && angles[i] > angles[i + 1];
-    const isMin = angles[i] < angles[i - 1] && angles[i] < angles[i + 1];
-    if ((isMax || isMin) && Math.abs(angles[i]) > 3) {
+  // Use a sliding window of 3 to reduce noise sensitivity
+  for (let i = 2; i < angles.length - 2; i++) {
+    const prev = (angles[i - 2] + angles[i - 1]) / 2;
+    const curr = angles[i];
+    const next = (angles[i + 1] + angles[i + 2]) / 2;
+    const isMax = curr > prev && curr > next;
+    const isMin = curr < prev && curr < next;
+    if ((isMax || isMin) && Math.abs(curr) > 2) {
       peakCount++;
     }
   }
   const oscillations = Math.floor(peakCount / 2);
-  if (oscillations < 2) {
+  if (oscillations < 1) {
     return { type: 'too-short', message: MESSAGES['too-short'] };
   }
 
-  // 4. Check for irregular pattern: swing period variation > 50%
+  // 4. Check for irregular pattern: only flag truly erratic data
+  // Find significant peaks only (> 20% of max angle to ignore noise)
+  const significantThreshold = maxAngle * 0.2;
   const peakTimes: number[] = [];
-  for (let i = 2; i < angles.length; i++) {
-    const prev = angles[i - 1] - angles[i - 2];
-    const curr = angles[i] - angles[i - 1];
-    if (prev > 0 && curr < 0 && Math.abs(angles[i - 1]) > 5) {
-      // Local maximum
-      const sampleIdx = startIndex + i - 1;
+  for (let i = 1; i < angles.length - 1; i++) {
+    if (angles[i] > angles[i - 1] && angles[i] > angles[i + 1] && angles[i] > significantThreshold) {
+      const sampleIdx = startIndex + i;
       if (sampleIdx < samples.length) {
-        peakTimes.push(samples[sampleIdx].timestamp);
+        // Minimum distance between peaks: 200ms to avoid double-counting
+        if (peakTimes.length === 0 ||
+            samples[sampleIdx].timestamp - peakTimes[peakTimes.length - 1] > 200) {
+          peakTimes.push(samples[sampleIdx].timestamp);
+        }
       }
     }
   }
 
-  if (peakTimes.length >= 3) {
+  if (peakTimes.length >= 4) {
     const periods: number[] = [];
     for (let i = 1; i < peakTimes.length; i++) {
       periods.push(peakTimes[i] - peakTimes[i - 1]);
@@ -82,7 +89,7 @@ export function validateMeasurement(data: MeasurementData): ValidationResult {
       (max, p) => Math.max(max, Math.abs(p - avgPeriod) / avgPeriod),
       0,
     );
-    if (maxVariation > 0.5) {
+    if (maxVariation > 1.0) {
       return { type: 'irregular', message: MESSAGES['irregular'] };
     }
   }

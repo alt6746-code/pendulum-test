@@ -17,9 +17,9 @@ type MeasurePhase = 'preparing' | 'countdown' | 'waiting' | 'recording' | 'analy
 
 const COUNTDOWN_SEC = 5;
 const MAX_RECORDING_SEC = 30;
-const MOTION_THRESHOLD = 15;       // deg/s to detect motion start
+const MOTION_THRESHOLD = 30;       // deg/s to detect motion start (relaxed for real sensor noise)
 const STOP_WINDOW_MS = 2000;       // window to check for motion stop
-const STOP_THRESHOLD = 3;          // deg/s RMS for motion stop
+const STOP_THRESHOLD = 5;          // deg/s RMS for motion stop (relaxed)
 const SAMPLING_HZ = 60;
 
 export default function Measurement({ side, onComplete, onFail }: Props) {
@@ -33,11 +33,28 @@ export default function Measurement({ side, onComplete, onFail }: Props) {
   const recordingStartTimeRef = useRef<number>(0);
   const analyzeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Cleanup on unmount
+  // Lock screen orientation + cleanup on unmount
   useEffect(() => {
+    // Lock to portrait to prevent rotation during measurement
+    const lockOrientation = async () => {
+      try {
+        const so = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+        if (so.lock) await so.lock('portrait');
+      } catch {
+        // Orientation lock not supported or denied — continue
+      }
+    };
+    lockOrientation();
+
     return () => {
       if (cleanupRef.current) cleanupRef.current();
       if (analyzeTimeoutRef.current) clearTimeout(analyzeTimeoutRef.current);
+      // Unlock orientation
+      try {
+        screen.orientation.unlock();
+      } catch {
+        // ignore
+      }
     };
   }, []);
 

@@ -70,12 +70,12 @@ const flatSamples: SensorSample[] = Array.from({ length: 300 }, (_, i) => ({
   accX: 0, accY: 0, accZ: 9.81,
 }));
 
-// Impact data: normal + a 5g spike
+// Impact data: normal + a 7g spike (must exceed 6g threshold)
 const impactSamples = generateDampedPendulum(80, 0.3, 0.8, 12, 2);
 const impactIdx = Math.floor(2.5 * SAMPLING_HZ); // during motion
 impactSamples[impactIdx] = {
   ...impactSamples[impactIdx],
-  accX: 45, accY: 10, accZ: 10, // total > 4g
+  accX: 60, accY: 20, accZ: 15, // total ~65 m/s² > 6g (58.86)
 };
 
 // Very short: large enough angle to pass no-motion check but too few oscillations
